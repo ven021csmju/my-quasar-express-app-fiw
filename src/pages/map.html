@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Longan Map — Multiple Locations</title>
+
+  <!-- Tailwind CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Leaflet CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-sA+e2hYkYkQf3y1PQ8YfY2DqH1q8y3bqk9g+oP8y+7w=" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-o9N1j2hK6VvY3y8b3Qb2h5z3D0s8bf4K0m6mFf0u4+c=" crossorigin=""></script>
+
+  <!-- Optional: nice colored marker icons (green) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    /* map height */
+    #map { height: 70vh; min-height: 480px; }
+    /* small tweaks for popup buttons */
+    .popup-btn { display:inline-block; margin:4px 4px 0 0; padding:4px 8px; border-radius:6px; cursor:pointer; font-size:13px; }
+  </style>
+</head>
+<body class="bg-gray-50 text-gray-800">
+  <div class="max-w-6xl mx-auto p-4">
+    <header class="mb-4">
+      <h1 class="text-2xl font-semibold">Longan Map — แผนที่แสดงสถานที่หลายจุด (ภาคเหนือ)</h1>
+      <p class="text-sm text-gray-600">ใช้ Leaflet + OpenStreetMap + Nominatim (geocoding) — บันทึกพิกัดใน LocalStorage</p>
+    </header>
+
+    <div class="grid md:grid-cols-3 gap-4">
+      <!-- Form -->
+      <div class="md:col-span-1 bg-white p-4 rounded-lg shadow">
+        <h2 class="font-medium mb-2">เพิ่ม / แก้ไข จุด (Add / Edit)</h2>
+
+        <form id="placeForm" class="space-y-2">
+          <label class="block text-sm">Place (ชื่อสถานที่)</label>
+          <input id="placeInput" class="w-full border rounded p-2" placeholder="ตัวอย่าง: ตลาดสันทราย" />
+
+          <label class="block text-sm">Province (จังหวัด)</label>
+          <input id="provinceInput" class="w-full border rounded p-2" placeholder="ตัวอย่าง: เชียงใหม่" />
+
+          <div class="flex space-x-2">
+            <div class="w-1/2">
+              <label class="block text-sm">Latitude</label>
+              <input id="latInput" class="w-full border rounded p-2" placeholder="เช่น 18.8056" />
+            </div>
+            <div class="w-1/2">
+              <label class="block text-sm">Longitude</label>
+              <input id="lngInput" class="w-full border rounded p-2" placeholder="เช่น 99.0105" />
+            </div>
+          </div>
+
+          <label class="block text-sm">Price (บาท/กก.)</label>
+          <input id="priceInput" class="w-full border rounded p-2" placeholder="เช่น 35.50" />
+
+          <label class="block text-sm">Date (วันที่สำรวจ)</label>
+          <input id="dateInput" type="date" class="w-full border rounded p-2" />
+
+          <div class="flex items-center space-x-2 mt-2">
+            <button id="addBtn" type="button" class="bg-green-600 text-white px-4 py-2 rounded">Add</button>
+            <button id="updateBtn" type="button" class="bg-blue-600 text-white px-4 py-2 rounded hidden">Update</button>
+            <button id="clearBtn" type="button" class="bg-gray-300 px-4 py-2 rounded">Clear</button>
+          </div>
+
+          <p class="text-xs text-gray-500 mt-2">
+            หมายเหตุ: หากไม่ใส่พิกัด ระบบจะใช้ Place + Province เรียก Nominatim เพื่อแปลงเป็นพิกัด (มีการ cache ผลลัพธ์ไว้ใน localStorage)
+          </p>
+        </form>
+      </div>
+
+      <!-- Controls / examples -->
+      <div class="md:col-span-2 space-y-4">
+        <div class="bg-white p-3 rounded-lg shadow">
+          <div class="flex justify-between items-center">
+            <h3 class="font-medium">Controls & Examples</h3>
+            <div class="space-x-2">
+              <button id="fitAllBtn" class="bg-indigo-600 text-white px-3 py-1 rounded">Fit All Markers</button>
+              <button id="clearAllBtn" class="bg-red-600 text-white px-3 py-1 rounded">Clear All</button>
+            </div>
+          </div>
+
+          <div class="mt-2 text-sm text-gray-600">
+            <p>ตัวอย่างเร็ว: คลิก <strong>Load example</strong> เพื่อใส่ตัวอย่างเชียงใหม่</p>
+            <div class="mt-2">
+              <button id="loadExampleBtn" class="bg-yellow-500 px-3 py-1 rounded">Load example (เชียงใหม่)</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Map -->
+        <div class="bg-white p-0 rounded-lg shadow">
+          <div id="map"></div>
+        </div>
+      </div>
+    </div>
+
+    <footer class="mt-4 text-sm text-gray-500">
+      <p>Libraries: Leaflet.js, OpenStreetMap tiles, Nominatim (geocoding). ผลการแปลงพิกัดจะถูกเก็บไว้ใน localStorage เพื่อลดการเรียกใช้ API ซ้ำ</p>
+    </footer>
+  </div>
+
+  <script>
+    // ---------------------------
+    // Config / initial settings
+    // ---------------------------
+    const NORTHERN_TH_CENTER = [18.5, 99.0]; // ใจกลางภาคเหนือโดยประมาณ
+    const INITIAL_ZOOM = 8;
+    const STORAGE_KEY = 'longan_map_markers_v1'; // เก็บ markers
+    const GEOCODE_CACHE_KEY = 'longan_geocode_cache_v1'; // cache geocoding
+
+    // Create map
+    const map = L.map('map').setView(NORTHERN_TH_CENTER, INITIAL_ZOOM);
+
+    // Tile layer (OpenStreetMap)
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    // custom green icon (using common marker image)
+    const greenIcon = L.icon({
+      iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
+      shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+      iconSize: [25, 41],
+      iconAnchor: [12, 41],
+      popupAnchor: [1, -34],
+      shadowSize: [41, 41]
+    });
+
+    // state
+    let markers = {}; // id -> { marker, data }
+    let editingId = null;
+
+    // utility: generate id
+    function uid() {
+      return 'm_' + Date.now() + '_' + Math.floor(Math.random()*9999);
+    }
+
+    // ---------------------------
+    // LocalStorage helpers
+    // ---------------------------
+    function saveAllToStorage() {
+      const raw = Object.values(markers).map(m => m.data);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(raw));
+    }
+
+    function loadAllFromStorage() {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return [];
+      try {
+        const arr = JSON.parse(raw);
+        return Array.isArray(arr) ? arr : [];
+      } catch(e) {
+        return [];
+      }
+    }
+
+    // Geocode cache helpers
+    function geocodeCacheGet(key) {
+      try {
+        const o = JSON.parse(localStorage.getItem(GEOCODE_CACHE_KEY) || '{}');
+        return o[key];
+      } catch(e) {
+        return null;
+      }
+    }
+    function geocodeCacheSet(key, val) {
+      try {
+        const o = JSON.parse(localStorage.getItem(GEOCODE_CACHE_KEY) || '{}');
+        o[key] = val;
+        localStorage.setItem(GEOCODE_CACHE_KEY, JSON.stringify(o));
+      } catch(e) {}
+    }
+
+    // ---------------------------
+    // Geocoding (Nominatim) with cache
+    // ---------------------------
+    async function geocodeAddress(place, province) {
+      const query = (place || '') + (province ? ', ' + province : '');
+      const cache = geocodeCacheGet(query);
+      if (cache) {
+        return cache; // { lat, lon, display_name }
+      }
+
+      // Use Nominatim public API
+      const params = new URLSearchParams({
+        q: query,
+        format: 'json',
+        addressdetails: '1',
+        limit: '1',
+        countrycodes: 'th' // focus Thailand
+      });
+      const url = 'https://nominatim.openstreetmap.org/search?' + params.toString();
+
+      // polite User-Agent / Referer isn't possible from browser; Nominatim allows browser usage but avoid heavy usage
+      const resp = await fetch(url, {
+        headers: {
+          'Accept-Language': 'th'
+        }
+      });
+      if (!resp.ok) throw new Error('Geocoding failed');
+      const data = await resp.json();
+      if (!data || !data.length) return null;
+      const first = { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), display_name: data[0].display_name };
+      geocodeCacheSet(query, first);
+      return first;
+    }
+
+    // ---------------------------
+    // Marker creation & popups
+    // ---------------------------
+    function createMarker(data, id = null) {
+      // data: { id, place, province, lat, lng, price, date }
+      const nid = id || data.id || uid();
+      data.id = nid;
+      const m = L.marker([data.lat, data.lng], { icon: greenIcon }).addTo(map);
+
+      function popupContent(d) {
+        const placeText = (d.place ? d.place + ' - ' : '') + (d.province || '');
+        return `
+          <div style="max-width:220px">
+            <div style="font-weight:600">${placeText}</div>
+            <div class="text-sm">ราคา: ${d.price ? d.price + ' บาท/กก.' : '-'} </div>
+            <div class="text-sm">วันที่: ${d.date || '-'}</div>
+            <div style="margin-top:8px;">
+              <button class="popup-btn" id="edit_${d.id}" style="background:#2563eb;color:#fff">แก้ไข</button>
+              <button class="popup-btn" id="delete_${d.id}" style="background:#ef4444;color:#fff">ลบ</button>
+            </div>
+          </div>
+        `;
+      }
+
+      m.bindPopup(popupContent(data));
+
+      // when popup opens, attach click handlers for edit/delete
+      m.on('popupopen', function(e) {
+        // small timeout to ensure DOM exists
+        setTimeout(() => {
+          const editBtn = document.getElementById('edit_' + data.id);
+          const delBtn = document.getElementById('delete_' + data.id);
+          if (editBtn) {
+            editBtn.onclick = () => {
+              loadDataToForm(data);
+              editingId = data.id;
+              document.getElementById('addBtn').classList.add('hidden');
+              document.getElementById('updateBtn').classList.remove('hidden');
+              map.closePopup();
+            };
+          }
+          if (delBtn) {
+            delBtn.onclick = () => {
+              if (confirm('ยืนยันการลบจุดนี้?')) {
+                removeMarker(data.id);
+              }
+            };
+          }
+        }, 20);
+      });
+
+      // store
+      markers[nid] = { marker: m, data: data };
+      saveAllToStorage();
+      return nid;
+    }
+
+    function updateMarkerData(id, newData) {
+      if (!markers[id]) return;
+      markers[id].data = { ...markers[id].data, ...newData };
+      // update marker position if changed
+      if (newData.lat !== undefined && newData.lng !== undefined) {
+        markers[id].marker.setLatLng([newData.lat, newData.lng]);
+      }
+      // update popup
+      markers[id].marker.setPopupContent(`
+        <div style="max-width:220px">
+          <div style="font-weight:600">${(markers[id].data.place ? markers[id].data.place + ' - ' : '') + (markers[id].data.province || '')}</div>
+          <div class="text-sm">ราคา: ${markers[id].data.price ? markers[id].data.price + ' บาท/กก.' : '-'} </div>
+          <div class="text-sm">วันที่: ${markers[id].data.date || '-'}</div>
+          <div style="margin-top:8px;">
+            <button class="popup-btn" id="edit_${id}" style="background:#2563eb;color:#fff">แก้ไข</button>
+            <button class="popup-btn" id="delete_${id}" style="background:#ef4444;color:#fff">ลบ</button>
+          </div>
+        </div>
+      `);
+      saveAllToStorage();
+    }
+
+    function removeMarker(id) {
+      if (!markers[id]) return;
+      map.removeLayer(markers[id].marker);
+      delete markers[id];
+      saveAllToStorage();
+      focusAllMarkers();
+    }
+
+    function focusAllMarkers() {
+      const entries = Object.values(markers);
+      if (!entries.length) {
+        map.setView(NORTHERN_TH_CENTER, INITIAL_ZOOM);
+        return;
+      }
+      const group = new L.featureGroup(entries.map(e => e.marker));
+      map.fitBounds(group.getBounds().pad(0.2));
+    }
+
+    // ---------------------------
+    // Form interactions
+    // ---------------------------
+    const placeInput = document.getElementById('placeInput');
+    const provinceInput = document.getElementById('provinceInput');
+    const latInput = document.getElementById('latInput');
+    const lngInput = document.getElementById('lngInput');
+    const priceInput = document.getElementById('priceInput');
+    const dateInput = document.getElementById('dateInput');
+
+    document.getElementById('addBtn').addEventListener('click', async () => {
+      const place = placeInput.value.trim();
+      const province = provinceInput.value.trim();
+      const latStr = latInput.value.trim();
+      const lngStr = lngInput.value.trim();
+      const price = priceInput.value.trim();
+      const date = dateInput.value;
+
+      let lat = parseFloat(latStr);
+      let lng = parseFloat(lngStr);
+
+      if ((!lat || !lng) && (!place && !province)) {
+        alert('กรุณากรอก Place/Province หรือพิกัด (Latitude/Longitude)');
+        return;
+      }
+
+      try {
+        if ((!lat || !lng) && (place || province)) {
+          // geocode
+          const res = await geocodeAddress(place, province);
+          if (!res) { alert('ไม่พบพิกัดจากชื่อสถานที่'); return; }
+          lat = res.lat; lng = res.lon;
+        }
+      } catch (e) {
+        console.error(e);
+        alert('เกิดข้อผิดพลาดในการแปลงที่อยู่เป็นพิกัด');
+        return;
+      }
+
+      const data = {
+        id: uid(),
+        place, province,
+        lat: lat, lng: lng,
+        price: price,
+        date: date
+      };
+      createMarker(data);
+      clearForm();
+      focusAllMarkers();
+    });
+
+    document.getElementById('updateBtn').addEventListener('click', async () => {
+      if (!editingId) return;
+      const place = placeInput.value.trim();
+      const province = provinceInput.value.trim();
+      const latStr = latInput.value.trim();
+      const lngStr = lngInput.value.trim();
+      const price = priceInput.value.trim();
+      const date = dateInput.value;
+
+      let lat = parseFloat(latStr);
+      let lng = parseFloat(lngStr);
+
+      try {
+        if ((!lat || !lng) && (place || province)) {
+          const res = await geocodeAddress(place, province);
+          if (res) { lat = res.lat; lng = res.lon; }
+        }
+      } catch(e) {
+        console.error(e);
+        alert('เกิดข้อผิดพลาดในการแปลงที่อยู่เป็นพิกัด');
+        return;
+      }
+
+      const newData = { place, province, price, date };
+      if (lat && lng) { newData.lat = lat; newData.lng = lng; }
+
+      updateMarkerData(editingId, newData);
+      editingId = null;
+      document.getElementById('addBtn').classList.remove('hidden');
+      document.getElementById('updateBtn').classList.add('hidden');
+      clearForm();
+      focusAllMarkers();
+    });
+
+    document.getElementById('clearBtn').addEventListener('click', () => {
+      clearForm();
+      editingId = null;
+      document.getElementById('addBtn').classList.remove('hidden');
+      document.getElementById('updateBtn').classList.add('hidden');
+    });
+
+    function clearForm() {
+      placeInput.value = '';
+      provinceInput.value = '';
+      latInput.value = '';
+      lngInput.value = '';
+      priceInput.value = '';
+      dateInput.value = '';
+    }
+
+    function loadDataToForm(data) {
+      placeInput.value = data.place || '';
+      provinceInput.value = data.province || '';
+      latInput.value = data.lat || '';
+      lngInput.value = data.lng || '';
+      priceInput.value = data.price || '';
+      dateInput.value = data.date || '';
+    }
+
+    // ---------------------------
+    // Load saved markers on start
+    // ---------------------------
+    function loadSavedMarkersToMap() {
+      const arr = loadAllFromStorage();
+      for (const d of arr) {
+        // ensure id exists
+        if (!d.id) d.id = uid();
+        // create marker but avoid duplicate when reloading
+        createMarker(d, d.id);
+      }
+      // if markers exist, fit bounds
+      setTimeout(() => focusAllMarkers(), 200);
+    }
+
+    // ---------------------------
+    // Other UI controls
+    // ---------------------------
+    document.getElementById('fitAllBtn').addEventListener('click', () => focusAllMarkers());
+    document.getElementById('clearAllBtn').addEventListener('click', () => {
+      if (!confirm('ลบทุกจุดในแผนที่และ localStorage?')) return;
+      for (const id of Object.keys(markers)) {
+        map.removeLayer(markers[id].marker);
+        delete markers[id];
+      }
+      localStorage.removeItem(STORAGE_KEY);
+      clearForm();
+      focusAllMarkers();
+    });
+
+    // example: Chiang Mai
+    document.getElementById('loadExampleBtn').addEventListener('click', () => {
+      // example specified in your prompt
+      const example = {
+        id: uid(),
+        place: 'เชียงใหม่',
+        province: 'เชียงใหม่',
+        lat: 18.7883,
+        lng: 98.9853,
+        price: '35.50',
+        date: '2023-08-15'
+      };
+      createMarker(example);
+      focusAllMarkers();
+    });
+
+    // ---------------------------
+    // Initialize
+    // ---------------------------
+    loadSavedMarkersToMap();
+
+    // Allow adding a marker by clicking map (optional convenience)
+    map.on('click', function(e) {
+      // fill lat/lng fields from click
+      latInput.value = e.latlng.lat.toFixed(6);
+      lngInput.value = e.latlng.lng.toFixed(6);
+    });
+
+    // Accessibility / keyboard: Enter on form add
+    document.getElementById('placeForm').addEventListener('submit', (ev) => {
+      ev.preventDefault();
+    });
+
+    // Save markers when window unloads (redundant but safe)
+    window.addEventListener('beforeunload', () => {
+      saveAllToStorage();
+    });
+
+  </script>
+</body>
+</html>
